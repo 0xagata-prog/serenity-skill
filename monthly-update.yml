@@ -1,0 +1,61 @@
+name: Monthly Skill Update
+
+on:
+  schedule:
+    - cron: '0 0 1 * *'  # 每月1号 UTC 00:00 自动运行
+  workflow_dispatch:       # 也可以手动触发
+
+jobs:
+  update-skill:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install twscrape anthropic pandas
+
+      - name: Scrape latest tweets
+        env:
+          X_USERNAME: ${{ secrets.X_USERNAME }}
+          X_PASSWORD: ${{ secrets.X_PASSWORD }}
+          X_EMAIL: ${{ secrets.X_EMAIL }}
+          X_COOKIES: ${{ secrets.X_COOKIES }}
+        run: python scripts/scrape.py
+
+      - name: Distill new SKILL.md
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scripts/distill.py
+
+      - name: Check if SKILL.md changed
+        id: diff
+        run: |
+          git diff --quiet SKILL.md index.html && echo "changed=false" >> $GITHUB_OUTPUT || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push if changed
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "serenity-skill-bot"
+          git config user.email "bot@serenity-skill"
+          DATE=$(date +%Y.%m)
+          git add SKILL.md index.html data/latest_tweets.csv
+          git commit -m "skill + site update v${DATE} — distilled from latest tweets"
+          git push
+
+      - name: Create Release tag
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DATE=$(date +%Y.%m)
+          gh release create "v${DATE}" \
+            --title "Skill Update v${DATE}" \
+            --notes "Monthly distillation update. New tweets analyzed and SKILL.md refreshed. Re-paste into your Claude Project or ChatGPT to get the latest version." \
+            SKILL.md
